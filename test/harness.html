@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glasshouse Camera Card harness</title>
+<!--
+  Offline test harness. Open directly (file://) in a browser. Camera frames are painted on a canvas
+  (frames.js) and handed to the card as data URLs through a mock hass (mock-hass.js).
+    (default)                 six cameras, a person at the front door, a car in the driveway, one offline
+    ?badges                   every motion / person / vehicle sensor on
+    ?offline                  offline, no-signal, lost-signal (blurred last frame) and loading tiles
+    ?live=camera.front_door   the live view open (snapshot fallback: no ha-camera-stream here)
+    &stream                   define a stand-in <ha-camera-stream> (shows the frame) to check the LIVE path
+    &phone                    lay the page out at 390 px (headless Chrome windows cannot be that narrow)
+    &cols=N  &notitle  &aspect=4:3   config overrides
+-->
+<style>
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh;
+    color: #e9eef6;
+    font-family: -apple-system, "SF Pro Text", Inter, Roboto, system-ui, sans-serif;
+    background:
+      radial-gradient(1200px 700px at 12% -10%, rgba(88,166,255,0.16), transparent 60%),
+      radial-gradient(900px 600px at 95% 5%, rgba(196,140,255,0.12), transparent 60%),
+      radial-gradient(1000px 800px at 50% 120%, rgba(77,214,232,0.08), transparent 60%),
+      linear-gradient(180deg, #070b13 0%, #0a1020 55%, #070b13 100%) fixed;
+  }
+  .page { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+  @media (min-width: 700px) { .page { padding: 24px; } }
+  body.phone .page { width: 390px; padding: 16px; box-sizing: border-box; }
+  #log { font: 11px/1.4 ui-monospace, monospace; color: #5d697d; white-space: pre-wrap; padding: 0 24px; }
+</style>
+<script src="icons.js" onerror="window.GH_TEST_ICONS = {}"></script>
+<script>
+  // ---- minimal Home Assistant element stubs (no ha-camera-stream: the card falls back to snapshots) ----
+  customElements.define('ha-card', class extends HTMLElement {});
+  function svgFor(name) {
+    const d = (window.GH_TEST_ICONS || {})[name];
+    if (!d) return `<span style="font:700 9px system-ui">${String(name || '?').replace('mdi:', '').slice(0, 2).toUpperCase()}</span>`;
+    return `<svg viewBox="0 0 24 24" width="100%" height="100%" style="display:block;fill:currentColor"><path d="${d}"></path></svg>`;
+  }
+  customElements.define('ha-icon', class extends HTMLElement {
+    static get observedAttributes() { return ['icon']; }
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).innerHTML =
+        '<style>:host{display:inline-flex;width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px);align-items:center;justify-content:center;vertical-align:middle}</style><span style="display:contents"></span>';
+    }
+    set icon(v) { this._icon = v; this._render(); }
+    get icon() { return this._icon; }
+    attributeChangedCallback(n, o, v) { this._icon = v; this._render(); }
+    _render() { this.shadowRoot.querySelector('span').innerHTML = svgFor(this._icon); }
+  });
+</script>
+<script>
+  if (location.search.includes('stream')) {
+    customElements.define('ha-camera-stream', class extends HTMLElement {
+      set stateObj(st) { this._st = st; this.innerHTML = `<img alt="" style="width:100%;height:100%;object-fit:contain;display:block" src="${st.attributes.entity_picture}">`; }
+      get stateObj() { return this._st; }
+    });
+  }
+</script>
+<script src="frames.js"></script>
+<script src="mock-hass.js"></script>
+<script src="../glasshouse-camera-card.js"></script>
+</head>
+<body>
+<div class="page" id="page"></div>
+<pre id="log"></pre>
+<script>
+(function () {
+  const q = new URLSearchParams(location.search);
+  if (q.has('phone')) document.body.classList.add('phone');
+  const IR = new Set(['camera.nursery', 'camera.side_gate']);
+  const scene = (id) => id.split('.')[1];
+  const pic = (id, t) => GHFrames.frame(scene(id), { t, ir: IR.has(id) });
+
+  let sensors;
+  if (q.has('badges')) {
+    sensors = {};
+    for (const [id] of GHMock.CAMERAS) for (const k of ['motion', 'person', 'vehicle']) sensors[`binary_sensor.${scene(id)}_${k}`] = 'on';
+  }
+  const states = GHMock.demoStates((id) => pic(id, Date.now()), sensors);
+  if (q.has('badges')) states['camera.side_gate'] = { ...states['camera.side_gate'], state: 'idle' };
+
+  const cam = (id, extra) => ({
+    entity: id,
+    motion: `binary_sensor.${scene(id)}_motion`,
+    person: `binary_sensor.${scene(id)}_person`,
+    vehicle: `binary_sensor.${scene(id)}_vehicle`,
+    ...extra,
+  });
+
+  let config;
+  const after = [];
+  if (q.has('offline')) {
+    // extra demo cameras for the failure states
+    const add = (id, name, state, picture) => {
+      states[id] = { entity_id: id, state, attributes: { friendly_name: name, entity_picture: picture },
+        last_changed: new Date(Date.now() - 47 * 60000).toISOString(), last_updated: new Date().toISOString() };
+    };
+    add('camera.porch', 'Porch', 'idle', 'data:image/jpeg;base64,AAAA');
+    add('camera.shed', 'Shed', 'idle', pic('camera.backyard', Date.now()));
+    add('camera.carport', 'Carport', 'idle', pic('camera.driveway', Date.now()));
+    config = {
+      title: 'Offline states', refresh: 10,
+      cameras: [
+        cam('camera.side_gate'), { entity: 'camera.porch' }, { entity: 'camera.shed' }, { entity: 'camera.carport' },
+      ],
+    };
+    after.push((card, mock) => {
+      // carport never finishes loading -> skeleton
+      card._tiles[3].fader.load = function () { this.pending = Date.now(); };
+    });
+    after.push((card, mock) => setTimeout(() => {
+      // shed: had a frame 4 minutes ago, then two failed refreshes -> blurred last frame + "Last seen"
+      const t = card._tiles[2];
+      t.lastOk = Date.now() - 4 * 60000; t.failures = 2; t.error = true;
+      card._renderTile(t); card._renderHeader();
+    }, 900));
+  } else {
+    config = {
+      title: 'Cameras', refresh: 10,
+      cameras: GHMock.CAMERAS.map(([id]) => cam(id)),
+    };
+  }
+  if (q.has('notitle')) delete config.title;
+  if (q.has('cols')) config.columns = Number(q.get('cols'));
+  if (q.has('aspect')) config.aspect_ratio = q.get('aspect');
+
+  const mock = GHMock.createHass(states, { hassUrl: '' });
+  window.mock = mock;
+  const card = document.createElement('glasshouse-camera-card');
+  card.setConfig(config);
+  document.getElementById('page').append(card);
+  mock.subscribe((hass) => { card.hass = hass; });
+  window.card = card;
+  after.forEach((fn) => fn(card, mock));
+
+  // vary the "ago" times a little so the wall looks lived-in
+  setTimeout(() => {
+    card._tiles.forEach((t, i) => { if (t.lastOk && !t.error) t.lastOk -= [2, 5, 1, 8, 3, 0][i % 6] * 1000; });
+    card._tickAgo();
+  }, 700);
+
+  // new frames arrive now and then (entity_picture token rotation in real HA)
+  if (!q.has('static')) {
+    setInterval(() => {
+      for (const [id] of GHMock.CAMERAS) {
+        const st = mock.current.states[id];
+        if (st && st.state !== 'unavailable') mock.setState(id, undefined, { entity_picture: pic(id, Date.now()) });
+      }
+    }, 10000);
+  }
+
+  if (q.get('live')) {
+    setTimeout(() => {
+      const t = card._tiles.find((x) => x.cam.entity === q.get('live'));
+      if (t) t.el.click();
+    }, 1200);
+  }
+
+  const log = document.getElementById('log');
+  document.addEventListener('hass-more-info', (e) => { log.textContent += `more-info ${e.detail.entityId}\n`; });
+})();
+</script>
+</body>
+</html>
