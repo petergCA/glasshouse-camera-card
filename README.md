@@ -64,6 +64,7 @@ For the full look, pair it with the **Glasshouse** theme.
 | `title` | string | – | Card title. When it's set, the header (count, offline, status chip) is shown. |
 | `columns` | number or `auto` | `auto` | Grid columns (1–6). `auto` = 1 below 520 px, 2 from 520 px, 3 from 900 px (4 when the camera count fills rows of 4 but not 3, e.g. 8). |
 | `aspect_ratio` | string | `16:9` | Tile shape: `16:9`, `4:3`, `1:1`, `56.25%` or a number. |
+| `live` | boolean | `false` | Tiles play live video (Home Assistant's own `ha-camera-stream`, muted) while the card is on screen and the tab is visible; snapshots stay underneath as the poster/fallback. Per camera `live: false` opts one out. |
 | `refresh` | number | `10` | Seconds between snapshot refreshes while the card is visible. `0` = only when Home Assistant reports a new picture. Values between 0 and 1 are rounded up to 1. |
 | `tap_action` | string | `live` | Default tap action for every camera (see below). |
 | `cameras` | list | **required** | Cameras, as entity ids or objects (below). |
@@ -77,6 +78,7 @@ Camera options:
 | `motion` | entity | Binary sensor. Amber badge while `on`. |
 | `person` | entity | Binary sensor. Pulsing red badge and alert ring while `on`. |
 | `vehicle` | entity | Binary sensor. Blue badge while `on`. |
+| `stream` | entity | Camera entity to stream in the tile (e.g. a low-res sub-stream), while `entity` is used for snapshots and the full-screen live view. |
 | `position` | string | Which part of a wide frame the tile shows: `left`, `center`, `right`, `top`, `bottom`, or `"x% y%"` (e.g. `"85% 50%"`). Default centre. |
 | `pan` | boolean | Drag a tile to look at another part of the frame (default `true`; card-level `pan: false` turns it off everywhere). The spot you leave it at is remembered in this browser. |
 | `tap_action` | string | `live` (in-card live view), `more-info` (Home Assistant dialog) or `none`. `{action: more-info}` also works. |

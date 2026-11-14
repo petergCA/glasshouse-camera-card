@@ -1,12 +1,12 @@
 /*!
- * Glasshouse Camera Card v1.2.0
+ * Glasshouse Camera Card v1.3.0
  * A security-camera wall: live-refreshing snapshots, detection badges and an in-card live view.
  * Part of the Glasshouse card suite. MIT License (c) 2026 Peter Gray.
  */
 (() => {
   'use strict';
 
-  const VERSION = '1.2.0';
+  const VERSION = '1.3.0';
   const TAG = 'glasshouse-camera-card';
 
   const HOLD_MS = 500;
@@ -335,6 +335,8 @@
     .stage ha-camera-stream, .stage .snap { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
     .stage ha-camera-stream { --video-max-height: 100%; }
     .stage .frame { object-fit: contain; object-position: 50% 50%; }
+    .media .tstream { position: absolute; z-index: 3; display: block; pointer-events: none; --video-max-height: none; }
+    .tile.panning .media .tstream { transition: none; }
     .tile.pannable { cursor: grab; touch-action: pan-y; }
     .tile.panning { cursor: grabbing; }
     .tile.panning .frame { transition: opacity ${SWAP_MS}ms ease; }
@@ -552,6 +554,8 @@
         if (o.position !== undefined && !parsePos(o.position)) throw new Error(`${TAG}: cameras[${i}].position must be left/center/right/top/bottom or "x% y%"`);
         o.pos = parsePos(o.position) || { x: 50, y: 50 };
         o.pan = o.pan === undefined ? (config.pan !== false) : o.pan !== false;
+        if (o.stream !== undefined && !isEntityId(o.stream)) throw new Error(`${TAG}: cameras[${i}].stream must be a camera entity id`);
+        o.liveTile = o.live === undefined ? config.live === true : o.live === true;
         return o;
       });
       const columns = config.columns === undefined || config.columns === 'auto' ? 'auto' : Number(config.columns);
@@ -569,6 +573,7 @@
       this._watch = [];
       for (const c of cameras) {
         this._watch.push(c.entity);
+        if (c.stream) this._watch.push(c.stream);
         for (const d of DETECTORS) if (c[d.key]) this._watch.push(c[d.key]);
       }
       this._teardownTiles();
@@ -604,6 +609,12 @@
         }
         this._renderHeader();
         if (this._live) this._renderLive();
+      }
+      for (const t of this._tiles || []) {
+        if (!t.stream) continue;
+        t.stream.hass = hass;
+        const so = hass.states[t.cam.stream || t.cam.entity];
+        if (so && so !== t.stream.stateObj) t.stream.stateObj = so;
       }
       this._setActive();
     }
@@ -654,6 +665,7 @@
         return;
       }
       this._running = active;
+      this._syncStreams(active);
       if (active) {
         this._cycle();
         this._ticker = setInterval(() => this._tickAgo(), 1000);
@@ -661,6 +673,35 @@
       } else {
         clearTimeout(this._timer); this._timer = null;
         clearInterval(this._ticker); this._ticker = null;
+      }
+    }
+
+    /** live tiles: run ha-camera-stream only while the card is on screen, the tab is visible and no dialog is open */
+    _syncStreams(on) {
+      const Stream = customElements.get('ha-camera-stream');
+      for (const t of this._tiles || []) {
+        if (!t.cam.liveTile) continue;
+        const st = this._hass && this._hass.states[t.cam.stream || t.cam.entity];
+        const want = on && !!Stream && !!st && st.state !== 'unavailable';
+        if (want && !t.stream) {
+          const s = document.createElement('ha-camera-stream');
+          s.className = 'tstream';
+          s.hass = this._hass;
+          s.stateObj = st;
+          s.muted = true;
+          s.controls = false;
+          s.allowExoPlayer = false;
+          s.fitMode = 'cover';
+          s.setAttribute('muted', '');
+          t.media.append(s);
+          t.stream = s;
+          t.el.classList.add('streaming');
+          this._applyPos(t);
+        } else if (!want && t.stream) {
+          t.stream.remove();
+          t.stream = null;
+          t.el.classList.remove('streaming');
+        }
       }
     }
 
@@ -818,7 +859,7 @@
         h('div', { class: 'bottom' }, [name, ago]));
 
       const t = {
-        cam, el, fader, skel, off, offT, offS, live, badgeEls, name, beat, agoText, ago,
+        cam, el, media, fader, skel, off, offT, offS, live, badgeEls, name, beat, agoText, ago, stream: null,
         st: undefined, dirty: true, lastReq: 0, lastOk: 0, requests: 0, failures: 0,
         error: false, hasFrame: false, holdTimer: null, held: false, lastUrl: null,
       };
@@ -837,6 +878,18 @@
 
     _applyPos(t) {
       t.el.style.setProperty('--gh-cam-pos', `${t.pos.x.toFixed(1)}% ${t.pos.y.toFixed(1)}%`);
+      if (t.stream) {
+        const img = t.fader.current;
+        const W = t.el.clientWidth, H = t.el.clientHeight;
+        const a = img && img.naturalWidth ? img.naturalWidth / img.naturalHeight : 16 / 9;
+        if (W && H) {
+          let w = W, hh = H;
+          if (W / H < a) { hh = H; w = H * a; } else { w = W; hh = W / a; }
+          const st = t.stream.style;
+          st.width = `${w}px`; st.height = `${hh}px`;
+          st.left = `${-(w - W) * t.pos.x / 100}px`; st.top = `${-(hh - H) * t.pos.y / 100}px`;
+        }
+      }
       if (t.cam.pan) {
         const o = this._overflow(t);
         t.el.classList.toggle('pannable', o.x > 1 || o.y > 1);
@@ -955,7 +1008,7 @@
         if (t.badgeEls[d.key]) t.badgeEls[d.key].hidden = !dets.includes(d);
       }
       const streaming = !!st && (st.state === 'streaming' || st.state === 'recording');
-      t.live.hidden = offline || !t.hasFrame || !streaming;
+      t.live.hidden = offline || !(t.stream || (t.hasFrame && streaming));
       t.live.classList.toggle('rec', !!st && st.state === 'recording');
       t.live.lastChild.textContent = st && st.state === 'recording' ? 'REC' : 'LIVE';
 
