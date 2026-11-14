@@ -1,12 +1,12 @@
 /*!
- * Glasshouse Camera Card v1.3.1
+ * Glasshouse Camera Card v1.3.2
  * A security-camera wall: live-refreshing snapshots, detection badges and an in-card live view.
  * Part of the Glasshouse card suite. MIT License (c) 2026 Peter Gray.
  */
 (() => {
   'use strict';
 
-  const VERSION = '1.3.1';
+  const VERSION = '1.3.2';
   const TAG = 'glasshouse-camera-card';
 
   const HOLD_MS = 500;
@@ -194,7 +194,8 @@
       background: linear-gradient(to bottom, rgba(4,7,12,0.42), transparent);
       opacity: 0; transition: opacity 300ms ease;
     }
-    .tile.has-frame .shade-top { opacity: 1; }
+    .tile.has-frame .shade-top { opacity: 0; }
+    .tile.has-frame:has(.badges > :not([hidden])) .shade-top { opacity: 1; height: 26%; }
 
     .top {
       position: absolute; top: 10px; left: 10px; right: 10px; z-index: 4;
@@ -243,14 +244,15 @@
 
     .bottom {
       position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; pointer-events: none;
-      display: flex; align-items: flex-end; gap: 8px; padding: 34px 12px 10px;
-      background: linear-gradient(to top, rgba(4,7,12,0.88) 0%, rgba(4,7,12,0.55) 42%, transparent 100%);
+      display: flex; align-items: flex-end; gap: 8px; padding: 6px 12px 10px;
+      /* shading stays behind the label only - nothing above the text line */
+      background: linear-gradient(to top, rgba(4,7,12,0.62) 0%, rgba(4,7,12,0.38) 60%, transparent 100%);
     }
     .name {
       flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 650; color: #fff; letter-spacing: -0.005em;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 3px rgba(0,0,0,0.85), 0 0 8px rgba(0,0,0,0.5);
     }
-    @container gh-tile (min-width: 380px) { .name { font-size: 16px; } .bottom { padding: 40px 14px 12px; } }
+    @container gh-tile (min-width: 380px) { .name { font-size: 16px; } .bottom { padding: 8px 14px 12px; } }
     .ago {
       flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; padding-bottom: 1px;
       font-size: 11px; font-weight: 600; color: rgba(233,238,246,0.74); font-variant-numeric: tabular-nums;
