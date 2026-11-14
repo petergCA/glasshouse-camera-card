@@ -77,6 +77,8 @@ Camera options:
 | `motion` | entity | Binary sensor. Amber badge while `on`. |
 | `person` | entity | Binary sensor. Pulsing red badge and alert ring while `on`. |
 | `vehicle` | entity | Binary sensor. Blue badge while `on`. |
+| `position` | string | Which part of a wide frame the tile shows: `left`, `center`, `right`, `top`, `bottom`, or `"x% y%"` (e.g. `"85% 50%"`). Default centre. |
+| `pan` | boolean | Drag a tile to look at another part of the frame (default `true`; card-level `pan: false` turns it off everywhere). The spot you leave it at is remembered in this browser. |
 | `tap_action` | string | `live` (in-card live view), `more-info` (Home Assistant dialog) or `none`. `{action: more-info}` also works. |
 
 ### Theming

@@ -1,12 +1,12 @@
 /*!
- * Glasshouse Camera Card v1.1.0
+ * Glasshouse Camera Card v1.2.0
  * A security-camera wall: live-refreshing snapshots, detection badges and an in-card live view.
  * Part of the Glasshouse card suite. MIT License (c) 2026 Peter Gray.
  */
 (() => {
   'use strict';
 
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
   const TAG = 'glasshouse-camera-card';
 
   const HOLD_MS = 500;
@@ -169,6 +169,7 @@
     .media { position: absolute; inset: 0; z-index: 0; }
     .frame {
       position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block;
+      object-position: var(--gh-cam-pos, 50% 50%);
       opacity: 0; z-index: 1; transition: opacity ${SWAP_MS}ms ease, filter 300ms ease, transform 700ms cubic-bezier(.2,.8,.2,1);
     }
     .frame.show { opacity: 1; }
@@ -333,7 +334,10 @@
     }
     .stage ha-camera-stream, .stage .snap { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
     .stage ha-camera-stream { --video-max-height: 100%; }
-    .stage .frame { object-fit: contain; }
+    .stage .frame { object-fit: contain; object-position: 50% 50%; }
+    .tile.pannable { cursor: grab; touch-action: pan-y; }
+    .tile.panning { cursor: grabbing; }
+    .tile.panning .frame { transition: opacity ${SWAP_MS}ms ease; }
 
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -424,6 +428,31 @@
     } catch (e) {
       return `Last seen ${fmtAgo(age)}`;
     }
+  }
+
+  /** "right", "left top", "70%", "70% 40%" or a number (x %) → {x, y} in percent; null when unset/invalid. */
+  function parsePos(v) {
+    if (v === undefined || v === null || v === '') return null;
+    if (typeof v === 'number') return Number.isFinite(v) ? { x: Math.min(100, Math.max(0, v)), y: 50 } : null;
+    const words = { left: ['x', 0], right: ['x', 100], top: ['y', 0], bottom: ['y', 100], center: [null, 50], centre: [null, 50] };
+    const out = { x: 50, y: 50 };
+    const parts = String(v).trim().toLowerCase().split(/\s+/);
+    let axis = 0;
+    for (const p of parts) {
+      if (words[p]) { const [k, n] = words[p]; if (k) out[k] = n; axis++; continue; }
+      const m = /^(-?\d+(?:\.\d+)?)%?$/.exec(p);
+      if (!m) return null;
+      out[axis === 0 ? 'x' : 'y'] = Math.min(100, Math.max(0, Number(m[1])));
+      axis++;
+    }
+    return out;
+  }
+  const POS_KEY = (id) => `glasshouse-camera-card:pos:${id}`;
+  function loadPos(id) {
+    try { const v = JSON.parse(localStorage.getItem(POS_KEY(id)) || 'null'); return v && Number.isFinite(v.x) && Number.isFinite(v.y) ? v : null; } catch (e) { return null; }
+  }
+  function savePos(id, pos) {
+    try { if (pos) localStorage.setItem(POS_KEY(id), JSON.stringify(pos)); else localStorage.removeItem(POS_KEY(id)); } catch (e) { /* private mode */ }
   }
 
   function tsOf(iso) {
@@ -520,6 +549,9 @@
           }
         }
         o.tap_action = o.tap_action === undefined ? defTap : this._tapOf(o.tap_action, `cameras[${i}].tap_action`);
+        if (o.position !== undefined && !parsePos(o.position)) throw new Error(`${TAG}: cameras[${i}].position must be left/center/right/top/bottom or "x% y%"`);
+        o.pos = parsePos(o.position) || { x: 50, y: 50 };
+        o.pan = o.pan === undefined ? (config.pan !== false) : o.pan !== false;
         return o;
       });
       const columns = config.columns === undefined || config.columns === 'auto' ? 'auto' : Number(config.columns);
@@ -683,6 +715,7 @@
       t.failures = 0;
       t.error = false;
       t.hasFrame = true;
+      if (!t.el.classList.contains('panning')) this._applyPos(t);
       const beat = t.beat;
       beat.classList.remove('pulse');
       void beat.offsetWidth;
@@ -793,29 +826,83 @@
       return t;
     }
 
+    /** How far (px) the cropped frame overflows the tile on each axis, from the front image's natural size. */
+    _overflow(t) {
+      const img = t.fader.current;
+      const W = t.el.clientWidth, H = t.el.clientHeight;
+      if (!img || !img.naturalWidth || !W || !H) return { x: 0, y: 0 };
+      const k = Math.max(W / img.naturalWidth, H / img.naturalHeight);
+      return { x: Math.max(0, img.naturalWidth * k - W), y: Math.max(0, img.naturalHeight * k - H) };
+    }
+
+    _applyPos(t) {
+      t.el.style.setProperty('--gh-cam-pos', `${t.pos.x.toFixed(1)}% ${t.pos.y.toFixed(1)}%`);
+      if (t.cam.pan) {
+        const o = this._overflow(t);
+        t.el.classList.toggle('pannable', o.x > 1 || o.y > 1);
+      }
+    }
+
     _bindTile(t) {
       const el = t.el;
-      let sx = 0, sy = 0;
+      let sx = 0, sy = 0, start = null, panning = false;
+      t.pos = (t.cam.pan && loadPos(t.cam.entity)) || { ...t.cam.pos };
+      this._applyPos(t);
       const clear = () => { clearTimeout(t.holdTimer); t.holdTimer = null; };
       el.addEventListener('pointerdown', (e) => {
         if (e.button !== undefined && e.button !== 0) return;
         t.held = false;
+        t.panned = false;
         sx = e.clientX; sy = e.clientY;
+        start = { ...t.pos };
+        panning = false;
         clear();
         t.holdTimer = setTimeout(() => {
           t.holdTimer = null;
+          if (panning) return;
           t.held = true;
           this._moreInfo(t.cam.entity);
         }, HOLD_MS);
       });
       el.addEventListener('pointermove', (e) => {
-        if (t.holdTimer && Math.hypot(e.clientX - sx, e.clientY - sy) > MOVE_TOLERANCE) clear();
+        if (!start) return;
+        const dx = e.clientX - sx, dy = e.clientY - sy;
+        if (!panning && Math.hypot(dx, dy) > MOVE_TOLERANCE) {
+          clear();
+          const o = this._overflow(t);
+          if (t.cam.pan && (o.x > 1 || o.y > 1) && e.buttons !== 0) {
+            panning = true;
+            el.classList.add('panning');
+            try { el.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+          }
+        }
+        if (panning) {
+          const o = this._overflow(t);
+          t.pos = {
+            x: o.x > 1 ? Math.min(100, Math.max(0, start.x - (dx / o.x) * 100)) : start.x,
+            y: o.y > 1 ? Math.min(100, Math.max(0, start.y - (dy / o.y) * 100)) : start.y,
+          };
+          this._applyPos(t);
+        }
       });
-      for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) el.addEventListener(ev, clear);
+      const end = () => {
+        clear();
+        if (panning) {
+          panning = false;
+          t.panned = true;
+          el.classList.remove('panning');
+          savePos(t.cam.entity, t.pos);
+        }
+        start = null;
+      };
+      for (const ev of ['pointerup', 'pointercancel']) el.addEventListener(ev, end);
+      el.addEventListener('pointerleave', () => { if (!panning) { clear(); start = null; } });
       el.addEventListener('contextmenu', (e) => e.preventDefault());
+      el.addEventListener('dragstart', (e) => e.preventDefault());
       el.addEventListener('click', (e) => {
         e.preventDefault();
         if (t.held) { t.held = false; return; }
+        if (t.panned) { t.panned = false; return; }
         this._tap(t);
       });
     }
