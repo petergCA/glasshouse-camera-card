@@ -10,6 +10,8 @@ glass, one accent per device type, live data.
 
 ## Features
 
+- **Zoom in place**: pinch, trackpad pinch or double-tap a tile to zoom into the picture without opening the live view; drag to look around, tap the pill to reset.
+
 - **Snapshot tiles** from each camera's `entity_picture` (`/api/camera_proxy/…`). Every `refresh`
   seconds a new frame loads in the background and **crossfades** over the old one. A spinner never
   covers a frame that is already on screen. The first load shows a quiet shimmering skeleton.
@@ -65,6 +67,8 @@ For the full look, pair it with the **Glasshouse** theme.
 | `columns` | number or `auto` | `auto` | Grid columns (1–6). `auto` = 1 below 520 px, 2 from 520 px, 3 from 900 px (4 when the camera count fills rows of 4 but not 3, e.g. 8). |
 | `aspect_ratio` | string | `16:9` | Tile shape: `16:9`, `4:3`, `1:1`, `56.25%` or a number. |
 | `live` | boolean | `false` | Tiles play live video (Home Assistant's own `ha-camera-stream`, muted) while the card is on screen and the tab is visible; snapshots stay underneath as the poster/fallback. Per camera `live: false` opts one out. |
+| `zoom` | boolean | `true` | Zoom into a tile on the dashboard: pinch (touch), pinch on a trackpad or ctrl+scroll (desktop), or double-tap to zoom 2.5× at that spot (double-tap again to zoom out). Drag to move around while zoomed; a small `2.5× ⟲` pill resets it. While zoomed a tap doesn't open the live view. A single tap waits ~0.3 s to tell it from a double tap; `zoom: false` makes taps instant. |
+| `max_zoom` | number | `4` | Largest zoom (1–10). |
 | `refresh` | number | `10` | Seconds between snapshot refreshes while the card is visible. `0` = only when Home Assistant reports a new picture. Values between 0 and 1 are rounded up to 1. |
 | `tap_action` | string | `live` | Default tap action for every camera (see below). |
 | `cameras` | list | **required** | Cameras, as entity ids or objects (below). |

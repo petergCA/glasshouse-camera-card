@@ -48,7 +48,7 @@ function setup(config, opts) {
   const mock = w.GHMock.createHass(undefined, { hassUrl: 'http://ha.local:8123' });
   const card = w.document.createElement('glasshouse-camera-card');
   card.setConfig(config || {
-    title: 'Cameras', refresh: 1,
+    title: 'Cameras', refresh: 1, zoom: false,
     cameras: [
       { entity: 'camera.front_door', name: 'Front Door', motion: 'binary_sensor.front_door_motion', person: 'binary_sensor.front_door_person' },
       { entity: 'camera.driveway', vehicle: 'binary_sensor.driveway_vehicle', motion: 'binary_sensor.driveway_motion', tap_action: 'more-info' },
@@ -288,6 +288,77 @@ function setup(config, opts) {
     mock.setState('camera.front_door', undefined, { entity_picture: '/x?token=new' });
     ok(s.stateObj === mock.current.states['camera.front_door'], 'stateObj kept current');
     card.remove();
+  }
+
+  console.log('in-tile zoom');
+  {
+    const { w, card, events } = setup({ refresh: 1, cameras: [{ entity: 'camera.front_door' }, { entity: 'camera.driveway' }] });
+    const C = w.customElements.get('glasshouse-camera-card');
+    eq(C.clampZoom({ z: 2, x: 50, y: -500 }, 200, 100), { z: 2, x: 0, y: -100 }, 'clamp keeps the view covering the tile');
+    eq(C.zoomAt({ z: 1, x: 0, y: 0 }, 2, 100, 50, 200, 100), { z: 2, x: -100, y: -50 }, 'zoom about the centre');
+    eq(C.zoomAt({ z: 1, x: 0, y: 0 }, 2, 0, 0, 200, 100), { z: 2, x: 0, y: 0 }, 'zoom about the corner');
+    const fd = card._tiles[0];
+    Object.defineProperty(fd.el, 'clientWidth', { value: 200 });
+    Object.defineProperty(fd.el, 'clientHeight', { value: 100 });
+    fd.el.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 100, right: 200, bottom: 100 });
+    ok(fd.el.classList.contains('zoomable'), 'tiles are zoomable by default');
+    const dlg = () => card.shadowRoot.querySelector('dialog');
+    const P = w.PointerEvent || w.MouseEvent;
+    const click = (x, y) => fd.el.dispatchEvent(new w.MouseEvent('click', { bubbles: true, clientX: x, clientY: y }));
+    // double tap zooms in at the point
+    click(100, 50); click(100, 50);
+    await sleep(320);
+    ok(fd.el.classList.contains('zoomed'), 'double tap zooms in');
+    eq(fd.zm, { z: 2.5, x: -150, y: -75 }, 'zoomed 2.5x about the tap');
+    ok(!dlg() || !dlg().hasAttribute('open'), 'double tap does not open the live view');
+    ok(!fd.zpill.hidden && fd.zpill.textContent.startsWith('2.5×'), 'zoom pill shows the level');
+    ok(fd.el.classList.contains('swiper'), 'zoomed tiles opt out of swipe navigation');
+    // drag pans the zoomed view
+    fd.el.dispatchEvent(new P('pointerdown', { bubbles: true, button: 0, clientX: 100, clientY: 50, pointerId: 1 }));
+    fd.el.dispatchEvent(new P('pointermove', { bubbles: true, buttons: 1, clientX: 140, clientY: 50, pointerId: 1 }));
+    fd.el.dispatchEvent(new P('pointerup', { bubbles: true, button: 0, clientX: 140, clientY: 50, pointerId: 1 }));
+    click(140, 50);
+    eq(fd.zm.x, -110, 'drag pans while zoomed');
+    await sleep(320);
+    ok(!dlg() || !dlg().hasAttribute('open'), 'a drag is not a tap');
+    // single tap while zoomed does nothing
+    click(10, 10);
+    await sleep(320);
+    ok((!dlg() || !dlg().hasAttribute('open')) && fd.zm.z === 2.5, 'tap while zoomed keeps the zoom, no live view');
+    // pill resets
+    fd.zpill.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    ok(!fd.el.classList.contains('zoomed') && fd.zm.z === 1 && fd.zpill.hidden, 'pill resets the zoom');
+    // pinch
+    fd.el.dispatchEvent(new P('pointerdown', { bubbles: true, button: 0, clientX: 80, clientY: 50, pointerId: 1 }));
+    fd.el.dispatchEvent(new P('pointerdown', { bubbles: true, button: 0, clientX: 120, clientY: 50, pointerId: 2 }));
+    fd.el.dispatchEvent(new P('pointermove', { bubbles: true, buttons: 1, clientX: 60, clientY: 50, pointerId: 1 }));
+    fd.el.dispatchEvent(new P('pointermove', { bubbles: true, buttons: 1, clientX: 140, clientY: 50, pointerId: 2 }));
+    eq(fd.zm.z, 2, 'pinch out doubles the zoom');
+    fd.el.dispatchEvent(new P('pointerup', { bubbles: true, button: 0, pointerId: 1 }));
+    fd.el.dispatchEvent(new P('pointerup', { bubbles: true, button: 0, pointerId: 2 }));
+    await sleep(320);
+    ok(!dlg() || !dlg().hasAttribute('open'), 'a pinch is not a tap');
+    // ctrl+wheel (trackpad pinch) zooms, max_zoom caps it
+    fd.el.dispatchEvent(new w.WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -2000, clientX: 100, clientY: 50 }));
+    eq(fd.zm.z, 4, 'capped at max_zoom (4)');
+    fd.el.dispatchEvent(new w.WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: 4000, clientX: 100, clientY: 50 }));
+    eq(fd.zm.z, 1, 'zoom out back to 1');
+    // single tap unzoomed still opens the live view (after the double-tap window)
+    fd.el.dispatchEvent(new P('pointerdown', { bubbles: true, button: 0, clientX: 100, clientY: 50, pointerId: 3 }));
+    fd.el.dispatchEvent(new P('pointerup', { bubbles: true, button: 0, clientX: 100, clientY: 50, pointerId: 3 }));
+    click(100, 50);
+    ok(!dlg() || !dlg().hasAttribute('open'), 'tap waits for a possible double tap');
+    await sleep(320);
+    ok(dlg() && dlg().hasAttribute('open'), 'then opens the live view');
+    eq(events.length, 0, 'no more-info');
+    card.remove();
+    const off = setup({ zoom: false, cameras: ['camera.front_door'] });
+    ok(!off.card._tiles[0].el.classList.contains('zoomable'), 'zoom: false turns it off');
+    const C2 = off.w.customElements.get('glasshouse-camera-card');
+    let threw = false;
+    try { new C2().setConfig({ cameras: ['camera.a'], max_zoom: 20 }); } catch (e) { threw = true; }
+    ok(threw, 'max_zoom range');
+    off.card.remove();
   }
 
   console.log('config');

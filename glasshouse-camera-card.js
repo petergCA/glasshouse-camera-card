@@ -6,11 +6,25 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.4.0';
+  const VERSION = '1.5.0';
   const TAG = 'glasshouse-camera-card';
 
   const HOLD_MS = 500;
   const MOVE_TOLERANCE = 10;
+  const DOUBLE_TAP_MS = 280;
+  const DEFAULT_MAX_ZOOM = 4;
+
+  /** Keep a zoomed view covering the tile: translate stays within [size - size*z, 0]. */
+  function clampZoom(zm, W, H) {
+    const z = Math.max(1, zm.z);
+    return { z, x: Math.min(0, Math.max(W - W * z, zm.x)), y: Math.min(0, Math.max(H - H * z, zm.y)) };
+  }
+
+  /** Zoom to z keeping the content point under (px, py) (tile coordinates) in place. */
+  function zoomAt(zm, z, px, py, W, H) {
+    const cx = (px - zm.x) / zm.z, cy = (py - zm.y) / zm.z;
+    return clampZoom({ z, x: px - cx * z, y: py - cy * z }, W, H);
+  }
   const LOAD_TIMEOUT = 20000;   // a request older than this no longer blocks the next one
   const FAIL_LIMIT = 2;         // consecutive failures (with a frame on screen) before "Offline"
   const SWAP_MS = 460;          // crossfade length
@@ -149,6 +163,21 @@
       touch-action: manipulation;
       transition: box-shadow 240ms ease, transform 120ms ease;
     }
+    /* in-tile zoom: the browser keeps vertical scrolling, pinches come to the card */
+    .tile.zoomable { touch-action: pan-y; }
+    .tile.zoomed { touch-action: none; cursor: grab; }
+    .tile.zoomed.panning { cursor: grabbing; }
+    .media { transform-origin: 0 0; will-change: transform; }
+    .media.zanim { transition: transform 220ms cubic-bezier(.2,.8,.2,1); }
+    .tile.zoomed .frame { transform: none !important; }
+    .zpill {
+      position: absolute; left: 10px; bottom: 34px; z-index: 6; display: inline-flex; align-items: center; gap: 4px;
+      height: 24px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
+      color: var(--gh-text); background: rgba(10,14,22,0.72); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14); cursor: pointer;
+    }
+    .zpill ha-icon { --mdc-icon-size: 14px; }
+    .zpill[hidden] { display: none; }
     .tile.static { cursor: default; }
     .tile:not(.static):active { transform: scale(0.99); }
     .tile::after {
@@ -533,6 +562,8 @@
     static buildUrl(stateObj, hass, t) { return buildUrl(stateObj, hass, t); }
     static parseAspect(v) { return parseAspect(v); }
     static fmtAgo(ms) { return fmtAgo(ms); }
+    static clampZoom(zm, W, H) { return clampZoom(zm, W, H); }
+    static zoomAt(zm, z, px, py, W, H) { return zoomAt(zm, z, px, py, W, H); }
 
     static getStubConfig(hass) {
       const ids = Object.keys((hass && hass.states) || {}).filter((id) => id.startsWith('camera.')).slice(0, 3);
@@ -572,7 +603,9 @@
       if (refresh > 0 && refresh < 1) refresh = 1;
       if (config.title !== undefined && typeof config.title !== 'string') throw new Error(`${TAG}: "title" must be text`);
 
-      this._config = { ...config, cameras, columns, aspect, refresh };
+      const maxZoom = config.max_zoom === undefined ? DEFAULT_MAX_ZOOM : Number(config.max_zoom);
+      if (!Number.isFinite(maxZoom) || maxZoom < 1 || maxZoom > 10) throw new Error(`${TAG}: "max_zoom" must be a number from 1 to 10`);
+      this._config = { ...config, cameras, columns, aspect, refresh, zoom: config.zoom !== false && maxZoom > 1, maxZoom };
       this._watch = [];
       for (const c of cameras) {
         this._watch.push(c.entity);
@@ -858,12 +891,13 @@
       const beat = h('i', { class: 'beat' });
       const agoText = h('span', { class: 'at' });
       const ago = h('span', { class: 'ago' }, [beat, h('span', { class: 'w', text: 'updated' }), agoText]);
-      el.append(media, skel, off, h('div', { class: 'shade-top' }),
+      const zpill = h('span', { class: 'zpill', role: 'button', tabindex: '0', hidden: true, title: 'Reset zoom', 'aria-label': 'Reset zoom' });
+      el.append(media, skel, off, zpill, h('div', { class: 'shade-top' }),
         h('div', { class: 'top' }, [live, badges]),
         h('div', { class: 'bottom' }, [name, ago]));
 
       const t = {
-        cam, el, media, fader, skel, off, offT, offS, live, badgeEls, name, beat, agoText, ago, stream: null,
+        cam, el, media, fader, skel, off, offT, offS, live, badgeEls, name, beat, agoText, ago, stream: null, zpill, zm: { z: 1, x: 0, y: 0 },
         st: undefined, dirty: true, lastReq: 0, lastOk: 0, requests: 0, failures: 0,
         error: false, hasFrame: false, holdTimer: null, held: false, lastUrl: null,
       };
@@ -898,18 +932,67 @@
         const o = this._overflow(t);
         t.el.classList.toggle('pannable', o.x > 1 || o.y > 1);
         // hass-swipe-navigation ignores swipes that start on .swiper, so dragging the view doesn't change pages
-        t.el.classList.toggle('swiper', o.x > 1 || o.y > 1);
+        t.el.classList.toggle('swiper', o.x > 1 || o.y > 1 || t.zm.z > 1);
       }
+    }
+
+    _setZoom(t, zm, animate) {
+      const W = t.el.clientWidth, H = t.el.clientHeight;
+      let next = clampZoom({ ...zm, z: Math.min(this._config.maxZoom, zm.z) }, W || 1, H || 1);
+      if (next.z < 1.04) next = { z: 1, x: 0, y: 0 };
+      t.zm = next;
+      t.media.classList.toggle('zanim', !!animate);
+      t.media.style.transform = next.z > 1 ? `translate(${next.x.toFixed(1)}px, ${next.y.toFixed(1)}px) scale(${next.z.toFixed(3)})` : '';
+      const zoomed = next.z > 1;
+      t.el.classList.toggle('zoomed', zoomed);
+      // hass-swipe-navigation ignores gestures that start on .swiper
+      t.el.classList.toggle('swiper', zoomed || (t.el.classList.contains('pannable')));
+      t.zpill.hidden = !zoomed;
+      if (zoomed) t.zpill.replaceChildren(`${next.z < 10 ? next.z.toFixed(1) : Math.round(next.z)}×`, icon('mdi:restore'));
     }
 
     _bindTile(t) {
       const el = t.el;
       let sx = 0, sy = 0, start = null, panning = false;
+      const zoomOn = this._config.zoom;
+      const pts = new Map();
+      let pinch = null, zdrag = null, tapTimer = null, lastTap = 0;
+      if (zoomOn) el.classList.add('zoomable');
+      const local = (x, y) => { const r = el.getBoundingClientRect(); return { x: x - r.left, y: y - r.top }; };
+      const resetZoom = (e) => { e.stopPropagation(); e.preventDefault(); this._setZoom(t, { z: 1, x: 0, y: 0 }, true); };
+      t.zpill.addEventListener('click', resetZoom);
+      t.zpill.addEventListener('pointerdown', (e) => e.stopPropagation());
+      t.zpill.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') resetZoom(e); });
+      if (zoomOn) {
+        el.addEventListener('wheel', (e) => {
+          // trackpad pinch arrives as ctrl+wheel; plain wheel keeps scrolling the page
+          if (!e.ctrlKey) return;
+          e.preventDefault();
+          const p = local(e.clientX, e.clientY);
+          const z = Math.max(1, Math.min(this._config.maxZoom, t.zm.z * Math.exp(-e.deltaY / 120)));
+          this._setZoom(t, zoomAt(t.zm, z, p.x, p.y, el.clientWidth, el.clientHeight));
+        }, { passive: false });
+      }
       t.pos = (t.cam.pan && loadPos(t.cam.entity)) || { ...t.cam.pos };
       this._applyPos(t);
       const clear = () => { clearTimeout(t.holdTimer); t.holdTimer = null; };
       el.addEventListener('pointerdown', (e) => {
         if (e.button !== undefined && e.button !== 0) return;
+        if (zoomOn) {
+          pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          if (pts.size === 2) {
+            // two fingers: pinch zoom, never a tap or a hold
+            clear();
+            start = null; panning = false; zdrag = null;
+            t.panned = true;
+            const [a, b] = [...pts.values()];
+            const m = local((a.x + b.x) / 2, (a.y + b.y) / 2);
+            pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, z0: t.zm.z, zm0: { ...t.zm }, m0: m };
+            try { el.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+            return;
+          }
+          if (t.zm.z > 1) zdrag = { sx: e.clientX, sy: e.clientY, x0: t.zm.x, y0: t.zm.y, moved: false };
+        }
         t.held = false;
         t.panned = false;
         sx = e.clientX; sy = e.clientY;
@@ -924,6 +1007,29 @@
         }, HOLD_MS);
       });
       el.addEventListener('pointermove', (e) => {
+        if (zoomOn && pts.has(e.pointerId)) pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pinch && pts.size >= 2) {
+          const [a, b] = [...pts.values()];
+          const d = Math.hypot(a.x - b.x, a.y - b.y);
+          const m = local((a.x + b.x) / 2, (a.y + b.y) / 2);
+          const z = Math.max(1, Math.min(this._config.maxZoom, pinch.z0 * d / pinch.d0));
+          const W = el.clientWidth, H = el.clientHeight;
+          // zoom about the starting midpoint, then follow the fingers' movement
+          const zm = zoomAt(pinch.zm0, z, pinch.m0.x, pinch.m0.y, W, H);
+          this._setZoom(t, { z: zm.z, x: zm.x + (m.x - pinch.m0.x), y: zm.y + (m.y - pinch.m0.y) });
+          return;
+        }
+        if (zdrag) {
+          const dx = e.clientX - zdrag.sx, dy = e.clientY - zdrag.sy;
+          if (!zdrag.moved && Math.hypot(dx, dy) > MOVE_TOLERANCE) {
+            zdrag.moved = true;
+            clear();
+            el.classList.add('panning');
+            try { el.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+          }
+          if (zdrag.moved) this._setZoom(t, { z: t.zm.z, x: zdrag.x0 + dx, y: zdrag.y0 + dy });
+          return;
+        }
         if (!start) return;
         const dx = e.clientX - sx, dy = e.clientY - sy;
         if (!panning && Math.hypot(dx, dy) > MOVE_TOLERANCE) {
@@ -944,7 +1050,17 @@
           this._applyPos(t);
         }
       });
-      const end = () => {
+      const end = (e) => {
+        if (e && pts.has(e.pointerId)) pts.delete(e.pointerId);
+        if (pinch) {
+          if (pts.size < 2) { pinch = null; t.panned = true; this._setZoom(t, t.zm); }
+          clear();
+          return;
+        }
+        if (zdrag) {
+          if (zdrag.moved) { t.panned = true; el.classList.remove('panning'); }
+          zdrag = null;
+        }
         clear();
         if (panning) {
           panning = false;
@@ -955,14 +1071,32 @@
         start = null;
       };
       for (const ev of ['pointerup', 'pointercancel']) el.addEventListener(ev, end);
-      el.addEventListener('pointerleave', () => { if (!panning) { clear(); start = null; } });
+      el.addEventListener('pointerleave', (e) => { if (!panning && !pinch && !(zdrag && zdrag.moved)) { pts.delete(e.pointerId); clear(); start = null; } });
       el.addEventListener('contextmenu', (e) => e.preventDefault());
       el.addEventListener('dragstart', (e) => e.preventDefault());
       el.addEventListener('click', (e) => {
         e.preventDefault();
         if (t.held) { t.held = false; return; }
         if (t.panned) { t.panned = false; return; }
-        this._tap(t);
+        if (!zoomOn) { this._tap(t); return; }
+        // double tap zooms in at that point (or back out); a single tap waits briefly to be sure
+        const now = Date.now();
+        if (tapTimer && now - lastTap < DOUBLE_TAP_MS) {
+          clearTimeout(tapTimer); tapTimer = null;
+          if (t.zm.z > 1) this._setZoom(t, { z: 1, x: 0, y: 0 }, true);
+          else {
+            const p = e.clientX || e.clientY ? local(e.clientX, e.clientY) : { x: el.clientWidth / 2, y: el.clientHeight / 2 };
+            this._setZoom(t, zoomAt(t.zm, Math.min(2.5, this._config.maxZoom), p.x, p.y, el.clientWidth, el.clientHeight), true);
+          }
+          return;
+        }
+        lastTap = now;
+        clearTimeout(tapTimer);
+        tapTimer = setTimeout(() => {
+          tapTimer = null;
+          // while zoomed, a tap does nothing (reset with the pill or a double tap)
+          if (t.zm.z <= 1) this._tap(t);
+        }, DOUBLE_TAP_MS);
       });
     }
 
