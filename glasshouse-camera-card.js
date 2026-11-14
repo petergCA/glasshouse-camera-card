@@ -1,12 +1,12 @@
 /*!
- * Glasshouse Camera Card v1.3.0
+ * Glasshouse Camera Card v1.3.1
  * A security-camera wall: live-refreshing snapshots, detection badges and an in-card live view.
  * Part of the Glasshouse card suite. MIT License (c) 2026 Peter Gray.
  */
 (() => {
   'use strict';
 
-  const VERSION = '1.3.0';
+  const VERSION = '1.3.1';
   const TAG = 'glasshouse-camera-card';
 
   const HOLD_MS = 500;
@@ -335,6 +335,7 @@
     .stage ha-camera-stream, .stage .snap { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
     .stage ha-camera-stream { --video-max-height: 100%; }
     .stage .frame { object-fit: contain; object-position: 50% 50%; }
+    .tile.streaming .ago { display: none; }
     .media .tstream { position: absolute; z-index: 3; display: block; pointer-events: none; --video-max-height: none; }
     .tile.panning .media .tstream { transition: none; }
     .tile.pannable { cursor: grab; touch-action: pan-y; }
@@ -714,6 +715,7 @@
       const now = Date.now();
       const every = this._refreshMs;
       for (const t of this._tiles) {
+        if (t.stream && t.hasFrame) continue; // video is playing; the snapshot is only a fallback poster
         const due = t.dirty || !t.lastReq || (every > 0 && now - t.lastReq >= every - 250);
         if (due) this._load(t);
       }
@@ -1008,7 +1010,8 @@
         if (t.badgeEls[d.key]) t.badgeEls[d.key].hidden = !dets.includes(d);
       }
       const streaming = !!st && (st.state === 'streaming' || st.state === 'recording');
-      t.live.hidden = offline || !(t.stream || (t.hasFrame && streaming));
+      // a tile playing live video needs no LIVE pill or "updated" age (that timed the snapshot underneath)
+      t.live.hidden = offline || !!t.stream || !(t.hasFrame && streaming);
       t.live.classList.toggle('rec', !!st && st.state === 'recording');
       t.live.lastChild.textContent = st && st.state === 'recording' ? 'REC' : 'LIVE';
 
