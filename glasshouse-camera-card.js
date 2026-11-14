@@ -1,12 +1,12 @@
 /*!
- * Glasshouse Camera Card v1.0.0
+ * Glasshouse Camera Card v1.1.0
  * A security-camera wall: live-refreshing snapshots, detection badges and an in-card live view.
  * Part of the Glasshouse card suite. MIT License (c) 2026 Peter Gray.
  */
 (() => {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const TAG = 'glasshouse-camera-card';
 
   const HOLD_MS = 500;
@@ -136,7 +136,7 @@
       grid-template-columns: repeat(var(--cols, 1), minmax(0, 1fr));
     }
     @container gh-cam (min-width: 520px) { .grid.auto { --cols: 2; } }
-    @container gh-cam (min-width: 900px) { .grid.auto { --cols: 3; } }
+    @container gh-cam (min-width: 900px) { .grid.auto { --cols: 3; } .grid.auto.by4 { --cols: 4; } }
 
     /* ---------- tile ---------- */
     .tile {
@@ -734,7 +734,10 @@
         this._head = { ic, summary, status };
       }
 
-      const grid = h('div', { class: `grid${c.columns === 'auto' ? ' auto' : ''}` });
+      const n = (c.cameras || []).length;
+      // auto: on wide cards use 4 columns when that fills every row and 3 would not (4, 8, 16 … cameras)
+      const by4 = c.columns === 'auto' && n % 4 === 0 && n % 3 !== 0;
+      const grid = h('div', { class: `grid${c.columns === 'auto' ? ' auto' : ''}${by4 ? ' by4' : ''}` });
       if (c.columns !== 'auto') grid.style.setProperty('--cols', String(c.columns));
       this._tiles = c.cameras.map((cam) => this._makeTile(cam));
       grid.append(...this._tiles.map((t) => t.el));

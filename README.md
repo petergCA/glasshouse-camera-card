@@ -62,7 +62,7 @@ For the full look, pair it with the **Glasshouse** theme.
 |---|---|---|---|
 | `type` | string | **required** | `custom:glasshouse-camera-card` |
 | `title` | string | – | Card title. When it's set, the header (count, offline, status chip) is shown. |
-| `columns` | number or `auto` | `auto` | Grid columns (1–6). `auto` = 1 below 520 px, 2 from 520 px, 3 from 900 px. |
+| `columns` | number or `auto` | `auto` | Grid columns (1–6). `auto` = 1 below 520 px, 2 from 520 px, 3 from 900 px (4 when the camera count fills rows of 4 but not 3, e.g. 8). |
 | `aspect_ratio` | string | `16:9` | Tile shape: `16:9`, `4:3`, `1:1`, `56.25%` or a number. |
 | `refresh` | number | `10` | Seconds between snapshot refreshes while the card is visible. `0` = only when Home Assistant reports a new picture. Values between 0 and 1 are rounded up to 1. |
 | `tap_action` | string | `live` | Default tap action for every camera (see below). |
