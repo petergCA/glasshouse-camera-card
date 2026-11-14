@@ -1,12 +1,12 @@
 /*!
- * Glasshouse Camera Card v1.3.2
+ * Glasshouse Camera Card v1.3.3
  * A security-camera wall: live-refreshing snapshots, detection badges and an in-card live view.
  * Part of the Glasshouse card suite. MIT License (c) 2026 Peter Gray.
  */
 (() => {
   'use strict';
 
-  const VERSION = '1.3.2';
+  const VERSION = '1.3.3';
   const TAG = 'glasshouse-camera-card';
 
   const HOLD_MS = 500;
@@ -897,6 +897,8 @@
       if (t.cam.pan) {
         const o = this._overflow(t);
         t.el.classList.toggle('pannable', o.x > 1 || o.y > 1);
+        // hass-swipe-navigation ignores swipes that start on .swiper, so dragging the view doesn't change pages
+        t.el.classList.toggle('swiper', o.x > 1 || o.y > 1);
       }
     }
 
