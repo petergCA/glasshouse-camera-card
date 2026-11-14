@@ -6,7 +6,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.3.3';
+  const VERSION = '1.4.0';
   const TAG = 'glasshouse-camera-card';
 
   const HOLD_MS = 500;
@@ -1015,7 +1015,8 @@
       }
       const streaming = !!st && (st.state === 'streaming' || st.state === 'recording');
       // a tile playing live video needs no LIVE pill or "updated" age (that timed the snapshot underneath)
-      t.live.hidden = offline || !!t.stream || !(t.hasFrame && streaming);
+      // no LIVE pill on tiles (Peter: video plays live anyway); the pill only flags a camera that is recording
+      t.live.hidden = offline || !!t.stream || !(t.hasFrame && streaming && st.state === 'recording');
       t.live.classList.toggle('rec', !!st && st.state === 'recording');
       t.live.lastChild.textContent = st && st.state === 'recording' ? 'REC' : 'LIVE';
 
@@ -1146,6 +1147,7 @@
       const offline = !st || st.state === 'unavailable';
       L.pill.className = `pill-live${L.stream && !offline ? '' : ' still'}`;
       L.pill.lastChild.textContent = offline ? 'OFFLINE' : L.stream ? 'LIVE' : 'SNAPSHOT';
+      L.pill.hidden = !offline && !!L.stream; // live video needs no LIVE pill; offline / snapshot still say so
       const brand = st && (st.attributes.brand || st.attributes.model_name);
       L.sub.textContent = offline ? 'Camera is offline'
         : L.stream ? ['Live stream', brand].filter(Boolean).join(' · ')

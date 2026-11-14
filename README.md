@@ -18,8 +18,8 @@ glass, one accent per device type, live data.
   come back, stale tiles refresh straight away. A new `entity_picture` token from Home Assistant
   also loads a fresh frame at once.
 - **Overlay** on each tile: the camera name and an "updated 4s ago" label with a heartbeat dot
-  that turns amber when frames go stale. A **LIVE** pill (or **REC**) appears when the camera
-  reports `streaming` or `recording`.
+  that turns amber when frames go stale. A **REC** pill appears when the camera reports `recording`.
+  Tiles playing live video (`live: true`) and the full live view show no LIVE pill.
 - **Detection badges** in the top-right corner for optional `motion`, `person` and `vehicle` binary
   sensors: a pulsing red dot for a person, amber for motion, blue for a vehicle. The tile gets a
   matching ring, and a person detection gives it a slow red alert pulse.
