@@ -6,7 +6,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.5.0';
+  const VERSION = '1.6.0';
   const TAG = 'glasshouse-camera-card';
 
   const HOLD_MS = 500;
@@ -288,6 +288,14 @@
       white-space: nowrap;
     }
     .ago .w { display: none; }
+    .snd { flex: 0 0 auto; pointer-events: auto; display: inline-grid; place-items: center; width: 28px; height: 28px; margin: 0 -4px -3px 2px;
+      border: 0; padding: 0; border-radius: 999px; cursor: pointer; color: rgba(233,238,246,0.85);
+      background: rgba(4,7,12,0.45); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14);
+      -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+    .snd[hidden] { display: none; }
+    .snd:hover { background: rgba(4,7,12,0.65); color: #fff; }
+    .snd.on { color: #fff; background: color-mix(in srgb, var(--gh-ok) 45%, rgba(4,7,12,0.5)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gh-ok) 70%, transparent); }
+    .snd ha-icon { --mdc-icon-size: 16px; }
     @container gh-tile (min-width: 300px) { .ago .w { display: inline; } }
     .beat { width: 6px; height: 6px; border-radius: 50%; background: var(--gh-ok);
       box-shadow: 0 0 0 0 color-mix(in srgb, var(--gh-ok) 60%, transparent); }
@@ -724,21 +732,48 @@
           s.className = 'tstream';
           s.hass = this._hass;
           s.stateObj = st;
-          s.muted = true;
+          s.muted = !t.sound;
           s.controls = false;
           s.allowExoPlayer = false;
           s.fitMode = 'cover';
-          s.setAttribute('muted', '');
+          if (!t.sound) s.setAttribute('muted', '');
           t.media.append(s);
           t.stream = s;
           t.el.classList.add('streaming');
+          t.snd.hidden = false;
+          this._applySound(t);
           this._applyPos(t);
         } else if (!want && t.stream) {
           t.stream.remove();
           t.stream = null;
           t.el.classList.remove('streaming');
+          t.snd.hidden = true;
+          t.sound = false;
+          this._applySound(t);
         }
       }
+    }
+
+    /** Mute or unmute a live tile: the stream element, plus any <video> already inside it (players keep their own). */
+    _applySound(t) {
+      const on = !!t.sound;
+      t.snd.classList.toggle('on', on);
+      t.snd.setAttribute('aria-label', on ? 'Mute' : 'Unmute');
+      t.snd.title = on ? 'Mute' : 'Unmute';
+      t.snd.replaceChildren(icon(on ? 'mdi:volume-high' : 'mdi:volume-off'));
+      const s = t.stream;
+      if (!s) return;
+      s.muted = !on;
+      s.toggleAttribute('muted', !on);
+      const walk = (root, depth) => {
+        if (!root || depth > 4) return;
+        for (const v of root.querySelectorAll('video')) {
+          v.muted = !on;
+          if (on && v.paused) { const pr = v.play(); if (pr && pr.catch) pr.catch(() => {}); }
+        }
+        for (const e of root.querySelectorAll('*')) if (e.shadowRoot) walk(e.shadowRoot, depth + 1);
+      };
+      try { walk(s.shadowRoot || s, 0); } catch (e) { /* players not ready yet: the muted property covers it */ }
     }
 
     get _refreshMs() { return this._config.refresh * 1000; }
@@ -892,12 +927,14 @@
       const agoText = h('span', { class: 'at' });
       const ago = h('span', { class: 'ago' }, [beat, h('span', { class: 'w', text: 'updated' }), agoText]);
       const zpill = h('span', { class: 'zpill', role: 'button', tabindex: '0', hidden: true, title: 'Reset zoom', 'aria-label': 'Reset zoom' });
+      // sound toggle for live tiles (they start muted); only shown while the tile is streaming
+      const snd = h('button', { class: 'snd', type: 'button', hidden: true, 'aria-label': 'Unmute', title: 'Unmute' }, [icon('mdi:volume-off')]);
       el.append(media, skel, off, zpill, h('div', { class: 'shade-top' }),
         h('div', { class: 'top' }, [live, badges]),
-        h('div', { class: 'bottom' }, [name, ago]));
+        h('div', { class: 'bottom' }, [name, ago, snd]));
 
       const t = {
-        cam, el, media, fader, skel, off, offT, offS, live, badgeEls, name, beat, agoText, ago, stream: null, zpill, zm: { z: 1, x: 0, y: 0 },
+        cam, el, media, fader, skel, off, offT, offS, live, badgeEls, name, beat, agoText, ago, stream: null, zpill, zm: { z: 1, x: 0, y: 0 }, snd, sound: false,
         st: undefined, dirty: true, lastReq: 0, lastOk: 0, requests: 0, failures: 0,
         error: false, hasFrame: false, holdTimer: null, held: false, lastUrl: null,
       };
@@ -962,6 +999,14 @@
       const resetZoom = (e) => { e.stopPropagation(); e.preventDefault(); this._setZoom(t, { z: 1, x: 0, y: 0 }, true); };
       t.zpill.addEventListener('click', resetZoom);
       t.zpill.addEventListener('pointerdown', (e) => e.stopPropagation());
+      t.snd.addEventListener('pointerdown', (e) => e.stopPropagation());
+      t.snd.addEventListener('click', (e) => {
+        e.stopPropagation(); e.preventDefault();
+        const on = !t.sound;
+        if (on) for (const o of this._tiles || []) if (o !== t && o.sound) { o.sound = false; this._applySound(o); } // one tile with sound at a time
+        t.sound = on;
+        this._applySound(t);
+      });
       t.zpill.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') resetZoom(e); });
       if (zoomOn) {
         el.addEventListener('wheel', (e) => {
