@@ -6,7 +6,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.6.0';
+  const VERSION = '1.7.1';
   const TAG = 'glasshouse-camera-card';
 
   const HOLD_MS = 500;
@@ -403,6 +403,11 @@
     return el;
   }
 
+  // when the page last scrolled (any scroller; scroll events don't bubble, so listen in the capture phase)
+  let _pageScrollAt = 0;
+  try { document.addEventListener('scroll', () => { _pageScrollAt = Date.now(); }, { capture: true, passive: true }); } catch (e) { /* no document */ }
+  const lastPageScroll = () => _pageScrollAt;
+
   function icon(name) {
     const el = document.createElement('ha-icon');
     el.setAttribute('icon', name);
@@ -613,7 +618,7 @@
 
       const maxZoom = config.max_zoom === undefined ? DEFAULT_MAX_ZOOM : Number(config.max_zoom);
       if (!Number.isFinite(maxZoom) || maxZoom < 1 || maxZoom > 10) throw new Error(`${TAG}: "max_zoom" must be a number from 1 to 10`);
-      this._config = { ...config, cameras, columns, aspect, refresh, zoom: config.zoom !== false && maxZoom > 1, maxZoom };
+      this._config = { ...config, cameras, columns, aspect, refresh, zoom: config.zoom !== false && maxZoom > 1, maxZoom, wheelZoom: config.wheel_zoom !== false };
       this._watch = [];
       for (const c of cameras) {
         this._watch.push(c.entity);
@@ -1009,12 +1014,20 @@
       });
       t.zpill.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') resetZoom(e); });
       if (zoomOn) {
+        // the mouse wheel zooms too, but never traps page scrolling: a wheel that arrives while the page is still
+        // scrolling (the tile slid under a still pointer) scrolls on until the mouse moves; at 1x, wheeling out scrolls the page
+        el.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse') t.wheelOk = true; });
+        el.addEventListener('pointerleave', () => { t.wheelOk = false; });
         el.addEventListener('wheel', (e) => {
-          // trackpad pinch arrives as ctrl+wheel; plain wheel keeps scrolling the page
-          if (!e.ctrlKey) return;
+          // trackpad pinch arrives as ctrl+wheel and always zooms
+          if (!e.ctrlKey) {
+            if (!this._config.wheelZoom || !t.wheelOk || Date.now() - lastPageScroll() < 300) return;
+            if (e.deltaY > 0 && t.zm.z <= 1.001) return; // zoomed all the way out: let the page scroll
+            if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return; // sideways swipes aren't zoom
+          }
           e.preventDefault();
           const p = local(e.clientX, e.clientY);
-          const z = Math.max(1, Math.min(this._config.maxZoom, t.zm.z * Math.exp(-e.deltaY / 120)));
+          const z = Math.max(1, Math.min(this._config.maxZoom, t.zm.z * Math.exp(-e.deltaY / (e.ctrlKey ? 120 : 260)))); // a wheel notch ~1.5x
           this._setZoom(t, zoomAt(t.zm, z, p.x, p.y, el.clientWidth, el.clientHeight));
         }, { passive: false });
       }
