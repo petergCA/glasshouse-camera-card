@@ -381,6 +381,26 @@ function setup(config, opts) {
     card.remove();
   }
 
+  console.log('info bar on hover / tap');
+  {
+    const { w, card } = setup({ info_bar: 'hover', zoom: false, cameras: [{ entity: 'camera.front_door' }] });
+    const t = card._tiles[0];
+    ok(card.shadowRoot.querySelector('ha-card').classList.contains('hoverbar'), 'hover mode marks the card');
+    const dlg = card.shadowRoot.querySelector('dialog');
+    const press = (type) => { const e = new w.MouseEvent('pointerdown', { bubbles: true, button: 0 }); Object.defineProperty(e, 'pointerType', { value: type }); t.el.dispatchEvent(e); t.el.dispatchEvent(new w.MouseEvent('pointerup', { bubbles: true })); };
+    press('touch'); t.el.click();
+    ok(t.el.classList.contains('bar-on') && !dlg.hasAttribute('open'), 'touch: first tap shows the bar, no live view');
+    press('touch'); t.el.click();
+    ok(dlg.hasAttribute('open'), 'touch: a tap while the bar shows opens the live view');
+    dlg.querySelector('.close').click();
+    t.el.classList.remove('bar-on');
+    press('mouse'); t.el.click();
+    ok(dlg.hasAttribute('open'), 'mouse: a click opens the live view straight away');
+    dlg.querySelector('.close').click();
+    const { card: c2 } = setup({ zoom: false, cameras: [{ entity: 'camera.front_door' }] });
+    ok(!c2.shadowRoot.querySelector('ha-card').classList.contains('hoverbar'), 'default: bar always shown');
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   windows.forEach((w) => w.close());
   process.exit(failed ? 1 : 0);

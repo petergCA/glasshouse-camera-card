@@ -71,6 +71,7 @@ For the full look, pair it with the **Glasshouse** theme.
 | `max_zoom` | number | `4` | Largest zoom (1–10). |
 | `refresh` | number | `10` | Seconds between snapshot refreshes while the card is visible. `0` = only when Home Assistant reports a new picture. Values between 0 and 1 are rounded up to 1. |
 | `tap_action` | string | `live` | Default tap action for every camera (see below). |
+| `info_bar` | string | `always` | `hover` hides the bottom bar (name, last update, sound button) until you point at a tile with a mouse; on a touch screen the first tap shows it for 4 s and a tap while it shows opens the live view. It stays up while a tile's sound is on. |
 | `cameras` | list | **required** | Cameras, as entity ids or objects (below). |
 
 Camera options:

@@ -6,7 +6,9 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.7.1';
+  const VERSION = '1.8.0';
+  /** info_bar: hover - how long a tap keeps the name bar up on touch screens */
+  const BAR_MS = 4000;
   const TAG = 'glasshouse-camera-card';
 
   const HOLD_MS = 500;
@@ -276,6 +278,15 @@
       display: flex; align-items: flex-end; gap: 8px; padding: 6px 12px 10px;
       /* shading stays behind the label only - nothing above the text line */
       background: linear-gradient(to top, rgba(4,7,12,0.62) 0%, rgba(4,7,12,0.38) 60%, transparent 100%);
+    }
+    .bottom { transition: opacity 220ms ease; }
+    .hoverbar .tile .bottom { opacity: 0; }
+    .hoverbar .tile .bottom .snd { pointer-events: none; }
+    .hoverbar .tile.bar-on .bottom, .hoverbar .tile:focus-visible .bottom, .hoverbar .tile:has(.snd.on) .bottom { opacity: 1; }
+    .hoverbar .tile.bar-on .bottom .snd, .hoverbar .tile:has(.snd.on) .bottom .snd { pointer-events: auto; }
+    @media (hover: hover) {
+      .hoverbar .tile:hover .bottom { opacity: 1; }
+      .hoverbar .tile:hover .bottom .snd { pointer-events: auto; }
     }
     .name {
       flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 650; color: #fff; letter-spacing: -0.005em;
@@ -618,7 +629,11 @@
 
       const maxZoom = config.max_zoom === undefined ? DEFAULT_MAX_ZOOM : Number(config.max_zoom);
       if (!Number.isFinite(maxZoom) || maxZoom < 1 || maxZoom > 10) throw new Error(`${TAG}: "max_zoom" must be a number from 1 to 10`);
-      this._config = { ...config, cameras, columns, aspect, refresh, zoom: config.zoom !== false && maxZoom > 1, maxZoom, wheelZoom: config.wheel_zoom !== false };
+      if (config.info_bar !== undefined && !['always', 'hover'].includes(config.info_bar)) {
+        throw new Error(`${TAG}: "info_bar" must be "always" or "hover"`);
+      }
+      const infoBar = config.info_bar === 'hover' ? 'hover' : 'always';
+      this._config = { ...config, cameras, columns, aspect, refresh, zoom: config.zoom !== false && maxZoom > 1, maxZoom, wheelZoom: config.wheel_zoom !== false, infoBar };
       this._watch = [];
       for (const c of cameras) {
         this._watch.push(c.entity);
@@ -870,7 +885,7 @@
       const root = this.shadowRoot;
       root.innerHTML = '';
       root.append(h('style', { text: STYLE }));
-      const card = h('ha-card');
+      const card = h('ha-card', { class: c.infoBar === 'hover' ? 'hoverbar' : null });
       card.style.setProperty('--arw', String(c.aspect.w));
       card.style.setProperty('--arh', String(c.aspect.h));
       this._card = card;
@@ -1006,6 +1021,7 @@
       t.zpill.addEventListener('pointerdown', (e) => e.stopPropagation());
       t.snd.addEventListener('pointerdown', (e) => e.stopPropagation());
       t.snd.addEventListener('click', (e) => {
+        if (this._config.infoBar === 'hover') this._showBar(t);
         e.stopPropagation(); e.preventDefault();
         const on = !t.sound;
         if (on) for (const o of this._tiles || []) if (o !== t && o.sound) { o.sound = false; this._applySound(o); } // one tile with sound at a time
@@ -1035,6 +1051,7 @@
       this._applyPos(t);
       const clear = () => { clearTimeout(t.holdTimer); t.holdTimer = null; };
       el.addEventListener('pointerdown', (e) => {
+        t.ptr = e.pointerType || 'mouse';
         if (e.button !== undefined && e.button !== 0) return;
         if (zoomOn) {
           pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -1136,7 +1153,7 @@
         e.preventDefault();
         if (t.held) { t.held = false; return; }
         if (t.panned) { t.panned = false; return; }
-        if (!zoomOn) { this._tap(t); return; }
+        if (!zoomOn) { this._tapOrReveal(t); return; }
         // double tap zooms in at that point (or back out); a single tap waits briefly to be sure
         const now = Date.now();
         if (tapTimer && now - lastTap < DOUBLE_TAP_MS) {
@@ -1153,9 +1170,25 @@
         tapTimer = setTimeout(() => {
           tapTimer = null;
           // while zoomed, a tap does nothing (reset with the pill or a double tap)
-          if (t.zm.z <= 1) this._tap(t);
+          if (t.zm.z <= 1) this._tapOrReveal(t);
         }, DOUBLE_TAP_MS);
       });
+    }
+
+    /** info_bar: hover - on touch, the first tap shows the name bar (and the sound button); a tap while it shows does the tap action */
+    _tapOrReveal(t) {
+      if (this._config.infoBar === 'hover' && t.ptr && t.ptr !== 'mouse' && !t.el.classList.contains('bar-on')) {
+        this._showBar(t);
+        return;
+      }
+      if (this._config.infoBar === 'hover') this._showBar(t);
+      this._tap(t);
+    }
+
+    _showBar(t) {
+      t.el.classList.add('bar-on');
+      clearTimeout(t.barTimer);
+      t.barTimer = setTimeout(() => t.el.classList.remove('bar-on'), BAR_MS);
     }
 
     _tap(t) {
